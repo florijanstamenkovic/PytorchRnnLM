@@ -1,0 +1,4 @@
+*.swp
+*.swo
+wikitext-2/
+__pycache__/
