@@ -27,10 +27,10 @@ class Net(nn.Module):
         self.fc1 = nn.Linear(hidden_dim, vocab_size)
         print(self)
 
-    def forward(self, sents, sent_lens):
-        embedded = self.embedding(sents)
-        packed_in = nn.utils.rnn.pack_padded_sequence(embedded, sent_lens)
-        packed_out, _ = self.gru(packed_in)
+    def forward(self, packed_sents):
+        packed_sents = nn.utils.rnn.PackedSequence(
+            self.embedding(packed_sents.data), packed_sents.batch_sizes)
+        packed_out, _ = self.gru(packed_sents)
         return F.log_softmax(self.fc1(packed_out.data), dim=1)
 
 
@@ -42,24 +42,22 @@ def train(data, model, optimizer, args, device):
         while len(data) >= current + args.batch_size:
             sentences = data[current:current + args.batch_size]
             sentences.sort(key=lambda l: len(l), reverse=True)
-            padded = nn.utils.rnn.pad_sequence(
+            packed = nn.utils.rnn.pack_sequence(
                 [torch.LongTensor(s) for s in sentences])
-            lens = torch.LongTensor([len(s) for s in sentences])
-            yield padded.to(device), lens.to(device)
+            yield packed if device.type == 'cpu' else packed.cuda()
             current += args.batch_size
 
     log_timer = LogTimer(2)
     model.train()
     for epoch_ind in range(args.epochs):
         model.zero_grad()
-        for batch_ind, (padded_sents, sent_lens) in enumerate(batches()):
-            out = model(padded_sents, sent_lens)
-            target = nn.utils.rnn.pack_padded_sequence(padded_sents, sent_lens)
-            loss = F.nll_loss(out, target.data)
+        for batch_ind, packed_sents in enumerate(batches()):
+            out = model(packed_sents)
+            loss = F.nll_loss(out, packed_sents.data)
             loss.backward()
             optimizer.step()
             if log_timer():
-                logging.info("Epoch %d/%d batch %d loss %.2f",
+                logging.info("Epoch %d/%d, batch %d, loss %.3f",
                              epoch_ind, args.epochs, batch_ind, loss.item())
 
 
