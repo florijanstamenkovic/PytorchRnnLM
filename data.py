@@ -4,7 +4,7 @@
 
 import os
 
-from vocabulary import Vocab
+from vocab import Vocab
 
 def path(part):
     """ Gets the dataset for 'part' being train|test|valid. """
