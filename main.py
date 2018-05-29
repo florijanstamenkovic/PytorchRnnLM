@@ -7,6 +7,7 @@ TODO document
 from argparse import ArgumentParser
 import logging
 import random
+import sys
 
 import torch
 import torch.nn as nn
@@ -81,7 +82,7 @@ def train(data, model, optimizer, args, device, vocab):
             optimizer.step()
 
 
-def parse_args():
+def parse_args(args):
     argp = ArgumentParser(description=__doc__)
     argp.add_argument("--logging", choices=["INFO", "DEBUG"],
                       default="INFO")
@@ -95,11 +96,11 @@ def parse_args():
     argp.add_argument("--lr", type=float, default=0.0003)
 
     argp.add_argument("--no-cuda", action="store_true")
-    return argp.parse_args()
+    return argp.parse_args(args)
 
 
-def main():
-    args = parse_args()
+def main(args=sys.argv[1:]):
+    args = parse_args(args)
     logging.basicConfig(level=args.logging)
 
     device = torch.device("cpu" if args.no_cuda or not torch.cuda.is_available()
