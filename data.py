@@ -6,6 +6,9 @@ import os
 
 from vocab import Vocab
 
+SENT_START = "<sentence_start>"
+SENT_END = "<sentence_end>"
+
 def path(part):
     """ Gets the dataset for 'part' being train|test|valid. """
     assert part in ("train", "test", "valid")
@@ -18,6 +21,7 @@ def load(path, index):
     a list of sentences where each is a list of token
     indices.
     """
+    start = index.add(SENT_START)
     sentences = []
     with open(path, "r") as f:
         for paragraph in f:
@@ -25,7 +29,10 @@ def load(path, index):
                 tokens = sentence.split()
                 if not tokens:
                     continue
-                sentences.append([index.add(t.lower()) for t in tokens])
+                sentence = [index.add(SENT_START)]
+                sentence.extend(index.add(t.lower()) for t in tokens)
+                sentence.append(index.add(SENT_END))
+                sentences.append(sentence)
 
     return sentences
 
