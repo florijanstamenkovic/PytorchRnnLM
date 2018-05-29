@@ -41,9 +41,9 @@ class Vocab(object):
 
     def __getitem__(self, key):
         if isinstance(key, int):
-            return self._ind_to_tok[index]
+            return self._ind_to_tok[key]
         else:
-            return self._tok_to_ind.get(word)
+            return self._tok_to_ind[key]
 
     def __setitem__(self, word, value):
         raise "Can't set items directly, use add(word) instead"

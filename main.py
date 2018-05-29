@@ -28,13 +28,25 @@ class Net(nn.Module):
         print(self)
 
     def forward(self, packed_sents):
-        packed_sents = nn.utils.rnn.PackedSequence(
+        # Calculate GRU outputs
+        embedded_sents = nn.utils.rnn.PackedSequence(
             self.embedding(packed_sents.data), packed_sents.batch_sizes)
-        packed_out, _ = self.gru(packed_sents)
-        return F.log_softmax(self.fc1(packed_out.data), dim=1)
+        out = self.fc1(self.gru(embedded_sents)[0].data)
+
+        sm = F.softmax(out, dim=1)
+        probs = sm[torch.arange(0, len(packed_sents.data), dtype=torch.int64),
+                   packed_sents.data]
+        perplexity = 2 ** (probs.log2().mean().neg().item())
+
+        # logging.info("Softmax shape: %r, mean %.3f, selected %.3f, "
+        #              "perplexity %.3f, data %.3f",
+        #           sm.shape, sm.mean().item(), probs.mean().item(), perplexity,
+        #              packed_sents.data.sum().item())
+
+        return F.log_softmax(out, dim=1), perplexity
 
 
-def train(data, model, optimizer, args, device):
+def train(data, model, optimizer, args, device, vocab):
 
     def batches():
         current = 0
@@ -52,13 +64,22 @@ def train(data, model, optimizer, args, device):
     for epoch_ind in range(args.epochs):
         model.zero_grad()
         for batch_ind, packed_sents in enumerate(batches()):
-            out = model(packed_sents)
+            out, perplexity = model(packed_sents)
             loss = F.nll_loss(out, packed_sents.data)
+            if log_timer():
+                logging.info("Epoch %d/%d, batch %d, loss %.3f, perplexity %.2f",
+                             epoch_ind, args.epochs, batch_ind, loss.item(),
+                             perplexity)
+                logging.info("Sentences")
+                padded, _ = nn.utils.rnn.pad_packed_sequence(packed_sents, True)
+                logging.info(" ".join([vocab[i.item()] for i in padded[0]]))
+                for i in range(20):
+                    pos = padded[0][i].item()
+                    logging.info("\t%s - %.3f",
+                                 vocab[pos],
+                                 out[i, pos].item())
             loss.backward()
             optimizer.step()
-            if log_timer():
-                logging.info("Epoch %d/%d, batch %d, loss %.3f",
-                             epoch_ind, args.epochs, batch_ind, loss.item())
 
 
 def parse_args():
@@ -84,7 +105,7 @@ def main():
     train_data = data.load(data.path("train"), vocab)
     model = Net(len(vocab), 128, 128, 1).to(device)
     optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.5)
-    train(train_data, model, optimizer, args, device)
+    train(train_data, model, optimizer, args, device, vocab)
 
 
 if __name__ == '__main__':
