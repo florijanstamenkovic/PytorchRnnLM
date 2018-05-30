@@ -92,13 +92,13 @@ def parse_args(args):
     argp.add_argument("--logging", choices=["INFO", "DEBUG"],
                       default="INFO")
 
-    argp.add_argument("--embedding-dim", type=int, default=384)
-    argp.add_argument("--gru-hidden", type=int, default=384)
+    argp.add_argument("--embedding-dim", type=int, default=512)
+    argp.add_argument("--gru-hidden", type=int, default=512)
     argp.add_argument("--gru-layers", type=int, default=1)
 
     argp.add_argument("--epochs", type=int, default=10)
-    argp.add_argument("--batch-size", type=int, default=48)
-    argp.add_argument("--lr", type=float, default=0.0003)
+    argp.add_argument("--batch-size", type=int, default=64)
+    argp.add_argument("--lr", type=float, default=0.001)
 
     argp.add_argument("--no-cuda", action="store_true")
     return argp.parse_args(args)

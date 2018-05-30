@@ -1,7 +1,13 @@
 from time import time
 
 class LogTimer:
-    """ Utility for emitting logs peridically. """
+    """ Utility for periodically emitting.
+    Usage:
+        lt = LogTimer(2)
+        while True:
+            if lt():
+                log("This is logged every 2 sec")
+    """
 
     def __init__(self, period):
         self._period = period
