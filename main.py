@@ -6,6 +6,7 @@ TODO document
 
 from argparse import ArgumentParser
 import logging
+import math
 import random
 import sys
 
@@ -23,25 +24,29 @@ class Net(nn.Module):
     def __init__(self, vocab_size, embedding_dim,
                  hidden_dim, gru_layers):
         super(Net, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+
+        # Custom init for the embedding as the output uses the same (tied)
+        # weights.
+        emb_w = torch.Tensor(vocab_size, embedding_dim)
+        stdv = 1. / math.sqrt(emb_w.size(1))
+        emb_w.uniform_(-stdv, stdv)
+        self.embedding = nn.Embedding(vocab_size, embedding_dim,
+                                      _weight=emb_w)
+
         self.gru = nn.GRU(embedding_dim, hidden_dim, gru_layers)
-        self.fc1 = nn.Linear(hidden_dim, vocab_size)
+
+        # Output bias, the weights are tied to the embedding.
+        self.out_b = torch.nn.Parameter(torch.zeros(vocab_size))
+
         print(self)
 
     def forward(self, packed_sents):
         embedded_sents = nn.utils.rnn.PackedSequence(
             self.embedding(packed_sents.data), packed_sents.batch_sizes)
-        out = self.fc1(self.gru(embedded_sents)[0].data)
-
-        # sm = F.softmax(out, dim=1)
-        # probs = sm[torch.arange(0, len(packed_sents.data), dtype=torch.int64),
-        #            packed_sents.data]
-        # perplexity = 2 ** (probs.log2().mean().neg().item())
-
-        # logging.info("Softmax shape: %r, mean %.3f, selected %.3f, "
-        #              "perplexity %.3f, data %.3f",
-        #           sm.shape, sm.mean().item(), probs.mean().item(), perplexity,
-        #              packed_sents.data.sum().item())
+        # GRU output is (packed_sequence_out, hidden_state)
+        out = self.gru(embedded_sents)[0].data
+        # Do weight sharing between embedding and output weights.
+        out = out.mm(self.embedding.weight.t()) + self.out_b
 
         return F.log_softmax(out, dim=1)
 
