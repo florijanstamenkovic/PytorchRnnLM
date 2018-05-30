@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-import data
+import data_loader
 from vocab import Vocab
 from log_timer import LogTimer
 
@@ -56,31 +56,38 @@ class Net(nn.Module):
         return F.log_softmax(out, dim=1)
 
 
-def train(data, model, optimizer, args, device, vocab):
-
-    def batches():
-        current = 0
+def batches(data, batch_size, shuffle=True):
+    """ Yields batches of sentences from 'data', ordered on length. """
+    if shuffle:
         random.shuffle(data)
-        while len(data) >= current + args.batch_size:
-            sentences = data[current:current + args.batch_size]
-            sentences.sort(key=lambda l: len(l), reverse=True)
-            yield [torch.LongTensor(s) for s in sentences]
-            current += args.batch_size
+    for i in range(0, len(data), batch_size):
+        sentences = data[i:i + batch_size]
+        sentences.sort(key=lambda l: len(l), reverse=True)
+        yield [torch.LongTensor(s) for s in sentences]
 
+
+def step(model, sents, device):
+    """ Performs a batch step for given model and sentence batch. """
+    x = nn.utils.rnn.pack_sequence([s[:-1] for s in sents])
+    y = nn.utils.rnn.pack_sequence([s[1:] for s in sents])
+    if device.type == 'cuda':
+        x, y = x.cuda(), y.cuda()
+    out = model(x)
+    loss = F.nll_loss(out, y.data)
+    return out, loss, y
+
+
+def train(data, model, optimizer, args, device, vocab):
     log_timer = LogTimer(2)
     model.train()
     for epoch_ind in range(args.epochs):
-        model.zero_grad()
-        for batch_ind, sents in enumerate(batches()):
-            x = nn.utils.rnn.pack_sequence([s[:-1] for s in sents])
-            y = nn.utils.rnn.pack_sequence([s[1:] for s in sents])
-            if device.type == 'cuda':
-                x, y = x.cuda(), y.cuda()
-            out = model(x)
-            loss = F.nll_loss(out, y.data)
+        for batch_ind, sents in enumerate(batches(data, args.batch_size)):
+            model.zero_grad()
+            out, loss, y = step(model, sents, device)
+            loss.backward()
+            optimizer.step()
             if log_timer() or batch_ind == 0:
-                # Calculate and log perplexity, a common metric for language
-                # models.
+                # Calculate perplexity.
                 prob = out.exp()[
                     torch.arange(0, y.data.shape[0], dtype=torch.int64), y.data]
                 perplexity = 2 ** prob.log2().neg().mean().item()
@@ -88,8 +95,20 @@ def train(data, model, optimizer, args, device, vocab):
                              epoch_ind, args.epochs, batch_ind, loss.item(),
                              perplexity)
 
-            loss.backward()
-            optimizer.step()
+
+
+def test(data, model, batch_size, device):
+    with torch.no_grad():
+        entropy_sum = 0
+        word_count = 0
+        for sents in batches(data, batch_size):
+            out, _, y = step(model, sents, device)
+            prob = out.exp()[
+                torch.arange(0, y.data.shape[0], dtype=torch.int64), y.data]
+            entropy_sum += prob.log2().neg().sum().item()
+            word_count += y.data.shape[0]
+        logging.info("Test set perplexity: %.1f",
+                     2 ** (entropy_sum / word_count))
 
 
 def parse_args(args):
@@ -118,12 +137,17 @@ def main(args=sys.argv[1:]):
                           else "cuda")
 
     vocab = Vocab()
-    train_data = data.load(data.path("train"), vocab)
+    # Load data now to know the whole vocabulary when training model.
+    train_data = data_loader.load(data_loader.path("train"), vocab)
+    test_data = data_loader.load(data_loader.path("test"), vocab)
+
     model = Net(len(vocab), args.embedding_dim,
                 args.gru_hidden, args.gru_layers,
                 args.tied).to(device)
     optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
+
     train(train_data, model, optimizer, args, device, vocab)
+    test(test_data, model, args.batch_size, device)
 
 
 if __name__ == '__main__':
