@@ -22,21 +22,24 @@ from log_timer import LogTimer
 
 class Net(nn.Module):
     def __init__(self, vocab_size, embedding_dim,
-                 hidden_dim, gru_layers):
+                 hidden_dim, gru_layers, tied):
         super(Net, self).__init__()
 
-        # Custom init for the embedding as the output uses the same (tied)
-        # weights.
-        emb_w = torch.Tensor(vocab_size, embedding_dim)
-        stdv = 1. / math.sqrt(emb_w.size(1))
-        emb_w.uniform_(-stdv, stdv)
+        self.tied = tied
+        emb_w = None
+        if tied:
+            emb_w = torch.Tensor(vocab_size, embedding_dim)
+            stdv = 1. / math.sqrt(emb_w.size(1))
+            emb_w.uniform_(-stdv, stdv)
         self.embedding = nn.Embedding(vocab_size, embedding_dim,
                                       _weight=emb_w)
 
         self.gru = nn.GRU(embedding_dim, hidden_dim, gru_layers)
 
-        # Output bias, the weights are tied to the embedding.
-        self.out_b = torch.nn.Parameter(torch.zeros(vocab_size))
+        if self.tied:
+            self.out_b = nn.Parameter(torch.zeros(vocab_size))
+        else:
+            self.fc1 = nn.Linear(hidden_dim, vocab_size)
 
         print(self)
 
@@ -45,8 +48,10 @@ class Net(nn.Module):
             self.embedding(packed_sents.data), packed_sents.batch_sizes)
         # GRU output is (packed_sequence_out, hidden_state)
         out = self.gru(embedded_sents)[0].data
-        # Do weight sharing between embedding and output weights.
-        out = out.mm(self.embedding.weight.t()) + self.out_b
+        if self.tied:
+            out = out.mm(self.embedding.weight.t()) + self.out_b
+        else:
+            out = self.fc1(out)
 
         return F.log_softmax(out, dim=1)
 
@@ -95,10 +100,11 @@ def parse_args(args):
     argp.add_argument("--embedding-dim", type=int, default=512)
     argp.add_argument("--gru-hidden", type=int, default=512)
     argp.add_argument("--gru-layers", type=int, default=1)
+    argp.add_argument("--tied", action="store_true")
 
     argp.add_argument("--epochs", type=int, default=10)
     argp.add_argument("--batch-size", type=int, default=64)
-    argp.add_argument("--lr", type=float, default=0.001)
+    argp.add_argument("--lr", type=float, default=0.0003)
 
     argp.add_argument("--no-cuda", action="store_true")
     return argp.parse_args(args)
@@ -114,7 +120,8 @@ def main(args=sys.argv[1:]):
     vocab = Vocab()
     train_data = data.load(data.path("train"), vocab)
     model = Net(len(vocab), args.embedding_dim,
-                args.gru_hidden, args.gru_layers).to(device)
+                args.gru_hidden, args.gru_layers,
+                args.tied).to(device)
     optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
     train(train_data, model, optimizer, args, device, vocab)
 
