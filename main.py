@@ -28,10 +28,11 @@ class RnnLm(nn.Module):
     """ A language model RNN with GRU layer(s). """
 
     def __init__(self, vocab_size, embedding_dim,
-                 hidden_dim, gru_layers):
+                 hidden_dim, gru_layers, dropout):
         super(RnnLm, self).__init__()
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        self.gru = nn.GRU(embedding_dim, hidden_dim, gru_layers)
+        self.gru = nn.GRU(embedding_dim, hidden_dim, gru_layers,
+                          dropout=dropout)
         self.fc1 = nn.Linear(hidden_dim, vocab_size)
         logging.debug("Net:\n%r", self)
 
@@ -54,14 +55,15 @@ class RnnLmWithTiedEmb(nn.Module):
     """
 
     def __init__(self, vocab_size, embedding_dim,
-                 hidden_dim, gru_layers):
+                 hidden_dim, gru_layers, dropout):
         super(RnnLmWithTiedEmb, self).__init__()
         emb_w = torch.Tensor(vocab_size, embedding_dim)
         stdv = 1. / math.sqrt(emb_w.size(1))
         emb_w.uniform_(-stdv, stdv)
         self.embedding = nn.Embedding(vocab_size, embedding_dim,
                                       _weight=emb_w)
-        self.gru = nn.GRU(embedding_dim, hidden_dim, gru_layers)
+        self.gru = nn.GRU(embedding_dim, hidden_dim, gru_layers,
+                          dropout=dropout)
         # Output bias, the weights are tied to the embedding.
         self.out_b = nn.Parameter(torch.zeros(vocab_size))
         logging.debug("Net:\n%r", self)
@@ -72,7 +74,8 @@ class RnnLmWithTiedEmb(nn.Module):
         embedded_sents = nn.utils.rnn.PackedSequence(
             self.embedding(packed_sents.data), packed_sents.batch_sizes)
         out_packed_sequence, _ = self.gru(embedded_sents)
-        out = out_packed_sequence.data.mm(self.embedding.weight.t()) + self.out_b
+        out = out_packed_sequence.data.mm(
+            self.embedding.weight.t()) + self.out_b
         return F.log_softmax(out, dim=1)
 
 
@@ -117,6 +120,7 @@ def train_epoch(data, model, optimizer, args, device):
 
 def evaluate(data, model, batch_size, device):
     """ Perplexity of the given data with the given model. """
+    model.eval()
     with torch.no_grad():
         entropy_sum = 0
         word_count = 0
@@ -134,14 +138,21 @@ def parse_args(args):
     argp.add_argument("--logging", choices=["INFO", "DEBUG"],
                       default="INFO")
 
-    argp.add_argument("--embedding-dim", type=int, default=512)
-    argp.add_argument("--gru-hidden", type=int, default=512)
-    argp.add_argument("--gru-layers", type=int, default=1)
-    argp.add_argument("--tied", action="store_true")
+    argp.add_argument("--embedding-dim", type=int, default=512,
+                      help="Word embedding dimensionality")
+    argp.add_argument("--tied", action="store_true",
+                      help="Use tied input/output embedding weights")
+    argp.add_argument("--gru-hidden", type=int, default=512,
+                      help="GRU gidden unit dimensionality")
+    argp.add_argument("--gru-layers", type=int, default=1,
+                      help="Number of GRU layers")
+    argp.add_argument("--gru-dropout", type=float, default=0.0,
+                      help="The amount of dropout in GRU layers")
 
     argp.add_argument("--epochs", type=int, default=10)
     argp.add_argument("--batch-size", type=int, default=64)
-    argp.add_argument("--lr", type=float, default=0.0003)
+    argp.add_argument("--lr", type=float, default=0.0003,
+                      help="Learning rate")
 
     argp.add_argument("--no-cuda", action="store_true")
     return argp.parse_args(args)
@@ -162,14 +173,15 @@ def main(args=sys.argv[1:]):
 
     model_class = RnnLmWithTiedEmb if args.tied else RnnLm
     model = model_class(len(vocab), args.embedding_dim,
-                        args.gru_hidden, args.gru_layers).to(device)
+                        args.gru_hidden, args.gru_layers,
+                        args.gru_dropout).to(device)
     optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
 
     for epoch_ind in range(args.epochs):
         logging.info("Training epoch %d", epoch_ind)
         train_epoch(train_data, model, optimizer, args, device)
         logging.info("Validation perplexity: %.1f",
-                    evaluate(valid_data, model, args.batch_size, device))
+                     evaluate(valid_data, model, args.batch_size, device))
     logging.info("Test perplexity: %.1f",
                  evaluate(test_data, model, args.batch_size, device))
 
