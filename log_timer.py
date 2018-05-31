@@ -1,8 +1,11 @@
+#!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+
 from time import time
 
 class LogTimer:
-    """ Utility for periodically emitting.
-    Usage:
+    """ Utility for periodically emitting logs. Example:
+
         lt = LogTimer(2)
         while True:
             if lt():

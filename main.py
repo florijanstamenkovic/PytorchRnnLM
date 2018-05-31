@@ -1,7 +1,11 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
 
 """
-TODO document
+Trains and evaluates an RNN language model written using
+PyTorch v0.4. Illustrates how to combine a batched, non-padded
+variable length data input with torch.nn.Embedding and how to
+use tied input and output word embeddings.
 """
 
 from argparse import ArgumentParser
@@ -20,46 +24,61 @@ from vocab import Vocab
 from log_timer import LogTimer
 
 
-class Net(nn.Module):
+class RnnLm(nn.Module):
+    """ A language model RNN with GRU layer(s). """
+
     def __init__(self, vocab_size, embedding_dim,
-                 hidden_dim, gru_layers, tied):
-        super(Net, self).__init__()
-
-        self.tied = tied
-        emb_w = None
-        if tied:
-            emb_w = torch.Tensor(vocab_size, embedding_dim)
-            stdv = 1. / math.sqrt(emb_w.size(1))
-            emb_w.uniform_(-stdv, stdv)
-        self.embedding = nn.Embedding(vocab_size, embedding_dim,
-                                      _weight=emb_w)
-
+                 hidden_dim, gru_layers):
+        super(RnnLm, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
         self.gru = nn.GRU(embedding_dim, hidden_dim, gru_layers)
-
-        if self.tied:
-            self.out_b = nn.Parameter(torch.zeros(vocab_size))
-        else:
-            self.fc1 = nn.Linear(hidden_dim, vocab_size)
-
-        print(self)
+        self.fc1 = nn.Linear(hidden_dim, vocab_size)
+        logging.debug("Net:\n%r", self)
 
     def forward(self, packed_sents):
+        """ Takes a PackedSequence of sentences tokens that has T tokens
+        belonging to vocabulary V. Outputs predicted log-probabilities
+        for the token following the one that's input in a tensor shaped
+        (T, |V|).
+        """
         embedded_sents = nn.utils.rnn.PackedSequence(
             self.embedding(packed_sents.data), packed_sents.batch_sizes)
-        # GRU output is (packed_sequence_out, hidden_state)
-        out = self.gru(embedded_sents)[0].data
-        if self.tied:
-            out = out.mm(self.embedding.weight.t()) + self.out_b
-        else:
-            out = self.fc1(out)
-
+        out_packed_sequence, _ = self.gru(embedded_sents)
+        out = self.fc1(out_packed_sequence.data)
         return F.log_softmax(out, dim=1)
 
 
-def batches(data, batch_size, shuffle=True):
+class RnnLmWithTiedEmb(nn.Module):
+    """ A language model RNN with GRU layer(s) and tied weights
+    between input and output word embeddings.
+    """
+
+    def __init__(self, vocab_size, embedding_dim,
+                 hidden_dim, gru_layers):
+        super(RnnLmWithTiedEmb, self).__init__()
+        emb_w = torch.Tensor(vocab_size, embedding_dim)
+        stdv = 1. / math.sqrt(emb_w.size(1))
+        emb_w.uniform_(-stdv, stdv)
+        self.embedding = nn.Embedding(vocab_size, embedding_dim,
+                                      _weight=emb_w)
+        self.gru = nn.GRU(embedding_dim, hidden_dim, gru_layers)
+        # Output bias, the weights are tied to the embedding.
+        self.out_b = nn.Parameter(torch.zeros(vocab_size))
+        logging.debug("Net:\n%r", self)
+
+    def forward(self, packed_sents):
+        """ Input and output form the same like in Net. """
+
+        embedded_sents = nn.utils.rnn.PackedSequence(
+            self.embedding(packed_sents.data), packed_sents.batch_sizes)
+        out_packed_sequence, _ = self.gru(embedded_sents)
+        out = out_packed_sequence.data.mm(self.embedding.weight.t()) + self.out_b
+        return F.log_softmax(out, dim=1)
+
+
+def batches(data, batch_size):
     """ Yields batches of sentences from 'data', ordered on length. """
-    if shuffle:
-        random.shuffle(data)
+    random.shuffle(data)
     for i in range(0, len(data), batch_size):
         sentences = data[i:i + batch_size]
         sentences.sort(key=lambda l: len(l), reverse=True)
@@ -67,7 +86,8 @@ def batches(data, batch_size, shuffle=True):
 
 
 def step(model, sents, device):
-    """ Performs a batch step for given model and sentence batch. """
+    """ Performs a model inference for the given model and sentence batch.
+    Returns the model otput, total loss and target outputs. """
     x = nn.utils.rnn.pack_sequence([s[:-1] for s in sents])
     y = nn.utils.rnn.pack_sequence([s[1:] for s in sents])
     if device.type == 'cuda':
@@ -77,27 +97,26 @@ def step(model, sents, device):
     return out, loss, y
 
 
-def train(data, model, optimizer, args, device, vocab):
-    log_timer = LogTimer(2)
+def train_epoch(data, model, optimizer, args, device):
+    """ Trains a single epoch of the given model. """
     model.train()
-    for epoch_ind in range(args.epochs):
-        for batch_ind, sents in enumerate(batches(data, args.batch_size)):
-            model.zero_grad()
-            out, loss, y = step(model, sents, device)
-            loss.backward()
-            optimizer.step()
-            if log_timer() or batch_ind == 0:
-                # Calculate perplexity.
-                prob = out.exp()[
-                    torch.arange(0, y.data.shape[0], dtype=torch.int64), y.data]
-                perplexity = 2 ** prob.log2().neg().mean().item()
-                logging.info("Epoch %d/%d, batch %d, loss %.3f, perplexity %.2f",
-                             epoch_ind, args.epochs, batch_ind, loss.item(),
-                             perplexity)
+    log_timer = LogTimer(5)
+    for batch_ind, sents in enumerate(batches(data, args.batch_size)):
+        model.zero_grad()
+        out, loss, y = step(model, sents, device)
+        loss.backward()
+        optimizer.step()
+        if log_timer() or batch_ind == 0:
+            # Calculate perplexity.
+            prob = out.exp()[
+                torch.arange(0, y.data.shape[0], dtype=torch.int64), y.data]
+            perplexity = 2 ** prob.log2().neg().mean().item()
+            logging.info("\tBatch %d, loss %.3f, perplexity %.2f",
+                         batch_ind, loss.item(), perplexity)
 
 
-
-def test(data, model, batch_size, device):
+def evaluate(data, model, batch_size, device):
+    """ Perplexity of the given data with the given model. """
     with torch.no_grad():
         entropy_sum = 0
         word_count = 0
@@ -107,8 +126,7 @@ def test(data, model, batch_size, device):
                 torch.arange(0, y.data.shape[0], dtype=torch.int64), y.data]
             entropy_sum += prob.log2().neg().sum().item()
             word_count += y.data.shape[0]
-        logging.info("Test set perplexity: %.1f",
-                     2 ** (entropy_sum / word_count))
+    return 2 ** (entropy_sum / word_count)
 
 
 def parse_args(args):
@@ -139,15 +157,21 @@ def main(args=sys.argv[1:]):
     vocab = Vocab()
     # Load data now to know the whole vocabulary when training model.
     train_data = data_loader.load(data_loader.path("train"), vocab)
+    valid_data = data_loader.load(data_loader.path("valid"), vocab)
     test_data = data_loader.load(data_loader.path("test"), vocab)
 
-    model = Net(len(vocab), args.embedding_dim,
-                args.gru_hidden, args.gru_layers,
-                args.tied).to(device)
+    model_class = RnnLmWithTiedEmb if args.tied else RnnLm
+    model = model_class(len(vocab), args.embedding_dim,
+                        args.gru_hidden, args.gru_layers).to(device)
     optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
 
-    train(train_data, model, optimizer, args, device, vocab)
-    test(test_data, model, args.batch_size, device)
+    for epoch_ind in range(args.epochs):
+        logging.info("Training epoch %d", epoch_ind)
+        train_epoch(train_data, model, optimizer, args, device)
+        logging.info("Validation perplexity: %.1f",
+                    evaluate(valid_data, model, args.batch_size, device))
+    logging.info("Test perplexity: %.1f",
+                 evaluate(test_data, model, args.batch_size, device))
 
 
 if __name__ == '__main__':

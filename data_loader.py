@@ -1,6 +1,14 @@
 #!/usr/bin/python3
+# -*- coding: UTF-8 -*-
 
-""" Loads and preprocesses the dataset. """
+"""
+Loads and preprocesses the "Wikitext long term dependency
+language modeling dataset:
+    https://einstein.ai/research/the-wikitext-long-term-dependency-language-modeling-dataset
+
+Lowercases all the words and splits into sentences, omitting
+the ending period. Add sentence start/end tokens.
+"""
 
 import os
 
