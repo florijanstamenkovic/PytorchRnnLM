@@ -28,13 +28,21 @@ class RnnLm(nn.Module):
     """ A language model RNN with GRU layer(s). """
 
     def __init__(self, vocab_size, embedding_dim,
-                 hidden_dim, gru_layers, dropout):
+                 hidden_dim, gru_layers, tied, dropout):
         super(RnnLm, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.tied = tied
+        if not tied:
+            self.embedding = nn.Embedding(vocab_size, embedding_dim)
         self.gru = nn.GRU(embedding_dim, hidden_dim, gru_layers,
                           dropout=dropout)
         self.fc1 = nn.Linear(hidden_dim, vocab_size)
         logging.debug("Net:\n%r", self)
+
+    def get_embedded(self, word_indexes):
+        if self.tied:
+            return self.fc1.weight.index_select(0, word_indexes)
+        else:
+            return self.embedding(word_indexes)
 
     def forward(self, packed_sents):
         """ Takes a PackedSequence of sentences tokens that has T tokens
@@ -43,39 +51,9 @@ class RnnLm(nn.Module):
         (T, |V|).
         """
         embedded_sents = nn.utils.rnn.PackedSequence(
-            self.embedding(packed_sents.data), packed_sents.batch_sizes)
+            self.get_embedded(packed_sents.data), packed_sents.batch_sizes)
         out_packed_sequence, _ = self.gru(embedded_sents)
         out = self.fc1(out_packed_sequence.data)
-        return F.log_softmax(out, dim=1)
-
-
-class RnnLmWithTiedEmb(nn.Module):
-    """ A language model RNN with GRU layer(s) and tied weights
-    between input and output word embeddings.
-    """
-
-    def __init__(self, vocab_size, embedding_dim,
-                 hidden_dim, gru_layers, dropout):
-        super(RnnLmWithTiedEmb, self).__init__()
-        emb_w = torch.Tensor(vocab_size, embedding_dim)
-        stdv = 1. / math.sqrt(emb_w.size(1))
-        emb_w.uniform_(-stdv, stdv)
-        self.embedding = nn.Embedding(vocab_size, embedding_dim,
-                                      _weight=emb_w)
-        self.gru = nn.GRU(embedding_dim, hidden_dim, gru_layers,
-                          dropout=dropout)
-        # Output bias, the weights are tied to the embedding.
-        self.out_b = nn.Parameter(torch.zeros(vocab_size))
-        logging.debug("Net:\n%r", self)
-
-    def forward(self, packed_sents):
-        """ Input and output form the same like in Net. """
-
-        embedded_sents = nn.utils.rnn.PackedSequence(
-            self.embedding(packed_sents.data), packed_sents.batch_sizes)
-        out_packed_sequence, _ = self.gru(embedded_sents)
-        out = out_packed_sequence.data.mm(
-            self.embedding.weight.t()) + self.out_b
         return F.log_softmax(out, dim=1)
 
 
@@ -171,10 +149,9 @@ def main(args=sys.argv[1:]):
     valid_data = data_loader.load(data_loader.path("valid"), vocab)
     test_data = data_loader.load(data_loader.path("test"), vocab)
 
-    model_class = RnnLmWithTiedEmb if args.tied else RnnLm
-    model = model_class(len(vocab), args.embedding_dim,
-                        args.gru_hidden, args.gru_layers,
-                        args.gru_dropout).to(device)
+    model = RnnLm(len(vocab), args.embedding_dim,
+                  args.gru_hidden, args.gru_layers,
+                  args.tied, args.gru_dropout).to(device)
     optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
 
     for epoch_ind in range(args.epochs):
