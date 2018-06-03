@@ -118,8 +118,8 @@ def parse_args(args):
 
     argp.add_argument("--embedding-dim", type=int, default=512,
                       help="Word embedding dimensionality")
-    argp.add_argument("--tied", action="store_true",
-                      help="Use tied input/output embedding weights")
+    argp.add_argument("--untied", action="store_true",
+                      help="Use untied input/output embedding weights")
     argp.add_argument("--gru-hidden", type=int, default=512,
                       help="GRU gidden unit dimensionality")
     argp.add_argument("--gru-layers", type=int, default=1,
@@ -127,9 +127,9 @@ def parse_args(args):
     argp.add_argument("--gru-dropout", type=float, default=0.0,
                       help="The amount of dropout in GRU layers")
 
-    argp.add_argument("--epochs", type=int, default=10)
-    argp.add_argument("--batch-size", type=int, default=64)
-    argp.add_argument("--lr", type=float, default=0.0003,
+    argp.add_argument("--epochs", type=int, default=4)
+    argp.add_argument("--batch-size", type=int, default=128)
+    argp.add_argument("--lr", type=float, default=0.001,
                       help="Learning rate")
 
     argp.add_argument("--no-cuda", action="store_true")
@@ -151,7 +151,7 @@ def main(args=sys.argv[1:]):
 
     model = RnnLm(len(vocab), args.embedding_dim,
                   args.gru_hidden, args.gru_layers,
-                  args.tied, args.gru_dropout).to(device)
+                  not args.untied, args.gru_dropout).to(device)
     optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
 
     for epoch_ind in range(args.epochs):
