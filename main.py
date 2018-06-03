@@ -127,9 +127,9 @@ def parse_args(args):
     argp.add_argument("--gru-dropout", type=float, default=0.0,
                       help="The amount of dropout in GRU layers")
 
-    argp.add_argument("--epochs", type=int, default=10)
-    argp.add_argument("--batch-size", type=int, default=64)
-    argp.add_argument("--lr", type=float, default=0.0003,
+    argp.add_argument("--epochs", type=int, default=4)
+    argp.add_argument("--batch-size", type=int, default=128)
+    argp.add_argument("--lr", type=float, default=0.001,
                       help="Learning rate")
 
     argp.add_argument("--no-cuda", action="store_true")
